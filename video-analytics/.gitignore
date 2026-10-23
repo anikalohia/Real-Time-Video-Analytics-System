@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+node_modules/
+.next/
+out/
+dist/
+build/
+*.onnx
+*.pt
+*.mp4
+*.avi
+*.mkv
+pgdata/
+grafana-data/
+.pytest_cache/
+.ruff_cache/
+*.log
+.DS_Store
+Explaination_Detailed.md
+Explaination.md
+PRD and TRD Real-Time Video Analytics Platform.md

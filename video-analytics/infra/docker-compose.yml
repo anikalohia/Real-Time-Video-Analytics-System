@@ -1,0 +1,90 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  ingestion:
+    build: ../services/ingestion
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_DSN: postgresql://user:pass@postgres:5432/analytics
+      MAX_FPS: "10"
+    volumes:
+      - ../samples:/samples
+    # Runs as a manager: streams are started/stopped from the API/UI.
+
+  worker:
+    build: ../services/worker
+    depends_on:
+      - redis
+    environment:
+      REDIS_HOST: redis
+      MODEL_PATH: yolov5n.onnx
+      CONSUMER_NAME: worker-1
+
+  event-processor:
+    build: ../services/event-processor
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_DSN: postgresql://user:pass@postgres:5432/analytics
+
+  api:
+    build: ../services/api
+    depends_on:
+      - redis
+      - postgres
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_DSN: postgresql://user:pass@postgres:5432/analytics
+
+  web:
+    build: ../web
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+
+volumes:
+  pgdata:
+  grafana-data:

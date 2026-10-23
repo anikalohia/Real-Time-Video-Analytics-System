@@ -1,0 +1,4 @@
+# Convenience entry point so `docker compose up` works from the repo root.
+# The canonical definitions live in infra/docker-compose.yml.
+include:
+  - infra/docker-compose.yml
