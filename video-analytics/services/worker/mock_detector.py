@@ -4,19 +4,19 @@ Emits a couple of pseudo-detections per frame so the full pipeline
 (Redis -> event processor -> DB -> API -> dashboard) can be exercised
 without ONNX Runtime or a real model.
 """
+
 import random
-from typing import List, Tuple
 
 import numpy as np
 
 
 class MockDetector:
-    class_names = ["person", "car", "bicycle", "dog", "truck"]
+    class_names = ['person', 'car', 'bicycle', 'dog', 'truck']
 
     def __init__(self, *args, **kwargs):
         pass
 
-    def detect(self, img: np.ndarray) -> List[Tuple[int, float, int, int, int, int]]:
+    def detect(self, img: np.ndarray) -> list[tuple[int, float, int, int, int, int]]:
         h, w = img.shape[:2]
         results = []
         n = random.randint(0, 3)

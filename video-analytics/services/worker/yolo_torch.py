@@ -3,14 +3,21 @@
 Optional backend used when DETECTOR_BACKEND=yolo. Requires the
 ultralytics and torch packages to be installed and working.
 """
-from typing import List, Tuple
 
 import numpy as np
 
 
 class YOLOTorchDetector:
-    def __init__(self, model_path="yolov5n.onnx", input_size=640, conf_threshold=0.5,
-                 nms_threshold=0.4, weights="yolov8n.pt"):
+    def __init__(
+        self,
+        model_path='yolov5n.onnx',
+        model_url=None,
+        input_size=640,
+        conf_threshold=0.5,
+        nms_threshold=0.4,
+        weights='yolov8n.pt',
+        **_kwargs,
+    ):
         from ultralytics import YOLO
 
         self.model = YOLO(weights)
@@ -19,8 +26,10 @@ class YOLOTorchDetector:
         self.input_size = input_size
         self.class_names = [self.model.names[i] for i in sorted(self.model.names)]
 
-    def detect(self, img: np.ndarray) -> List[Tuple[int, float, int, int, int, int]]:
-        results = self.model.predict(img, conf=self.conf, iou=self.iou, imgsz=self.input_size, verbose=False)
+    def detect(self, img: np.ndarray) -> list[tuple[int, float, int, int, int, int]]:
+        results = self.model.predict(
+            img, conf=self.conf, iou=self.iou, imgsz=self.input_size, verbose=False
+        )
         out = []
         for r in results:
             for b in r.boxes:

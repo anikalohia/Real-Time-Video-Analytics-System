@@ -1,9 +1,10 @@
 """Rule engine: zone membership, count thresholds, dwell time, cooldown."""
+
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
-def point_in_polygon(x: float, y: float, polygon: List[List[float]]) -> bool:
+def point_in_polygon(x: float, y: float, polygon: list[list[float]] | None) -> bool:
     """Ray casting algorithm. x,y normalized [0,1]."""
     if not polygon or len(polygon) < 3:
         return False
@@ -19,86 +20,110 @@ def point_in_polygon(x: float, y: float, polygon: List[List[float]]) -> bool:
     return inside
 
 
-def center(bbox: Dict[str, float]) -> Tuple[float, float]:
-    return (bbox["x"] + bbox["w"] / 2.0, bbox["y"] + bbox["h"] / 2.0)
+def center(bbox: dict[str, float]) -> tuple[float, float]:
+    return (bbox['x'] + bbox['w'] / 2.0, bbox['y'] + bbox['h'] / 2.0)
+
+
+def _object_key(det: dict[str, Any]) -> str:
+    if det.get('track_id'):
+        return f"track:{det['track_id']}"
+    bbox = det.get('bbox') or {}
+    cx, cy = center(bbox) if bbox else (0.0, 0.0)
+    return f"{det.get('class')}:{round(cx, 2)}:{round(cy, 2)}"
 
 
 class RuleEngine:
     def __init__(self):
-        self._last_fired: Dict[str, float] = {}
-        # dwell tracking: rule_id -> {object track key: first_seen_ts}
-        self._dwell: Dict[str, Dict[str, float]] = {}
+        self._last_fired: dict[str, float] = {}
+        # state is keyed by (stream_id, rule_id) -> object key -> timings
+        self._dwell: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
 
-    def _cooldown_ok(self, rule: Dict[str, Any]) -> bool:
-        rid = str(rule["id"])
-        now = time.time()
-        last = self._last_fired.get(rid, 0.0)
-        if now - last >= rule.get("cooldown_seconds", 60):
-            self._last_fired[rid] = now
-            return True
-        return False
+    def _cooldown_ok(self, rule: dict[str, Any], now: float) -> bool:
+        rid = str(rule['id'])
+        return now - self._last_fired.get(rid, 0.0) >= float(rule.get('cooldown_seconds', 60))
 
-    def evaluate(self, detections: List[Dict[str, Any]], rules: List[Dict[str, Any]],
-                 stream_id: str) -> List[Dict[str, Any]]:
-        """Return list of alerts for the given stream detections."""
-        alerts: List[Dict[str, Any]] = []
-        stream_rules = [r for r in rules if str(r.get("stream_id")) == str(stream_id) and r.get("enabled", True)]
-
-        for det in detections:
-            # filter by class if rule requires
-            pass
+    def evaluate(
+        self,
+        detections: list[dict[str, Any]],
+        rules: list[dict[str, Any]],
+        stream_id: str,
+        now: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return alerts for the given stream detections."""
+        now = time.time() if now is None else now
+        alerts: list[dict[str, Any]] = []
+        stream_rules = [
+            r for r in rules if str(r.get('stream_id')) == str(stream_id) and r.get('enabled', True)
+        ]
 
         for rule in stream_rules:
-            cls_filter = rule.get("class_filter")
-            zone = rule.get("zone_polygon")
-            threshold = rule.get("threshold_count", 1)
-            dwell = rule.get("dwell_seconds", 0)
-            rid = str(rule["id"])
+            cls_filter = rule.get('class_filter')
+            zone = rule.get('zone_polygon')
+            threshold = max(1, int(rule.get('threshold_count', 1)))
+            dwell = float(rule.get('dwell_seconds', 0) or 0)
+            rid = str(rule['id'])
+            state_key = (str(stream_id), rid)
 
             matched = []
             for det in detections:
-                if cls_filter and det["class"] != cls_filter:
+                if cls_filter and det.get('class') != cls_filter:
+                    continue
+                bbox = det.get('bbox')
+                if not bbox:
                     continue
                 if zone:
-                    cx, cy = center(det["bbox"])
+                    cx, cy = center(bbox)
                     if not point_in_polygon(cx, cy, zone):
                         continue
                 matched.append(det)
 
-            count = len(matched)
+            # Count unique objects, not raw detections.
+            unique: dict[str, dict[str, Any]] = {}
+            for det in matched:
+                unique.setdefault(_object_key(det), det)
+            count = len(unique)
             if count < threshold:
                 continue
 
-            # dwell logic
-            if dwell and dwell > 0:
-                now = time.time()
-                # use class as pseudo track key if no track id
-                keys = set()
-                for d in matched:
-                    keys.add(str(d.get("track_id") or d["class"]))
-                # require any key to have persisted > dwell
-                fired = False
-                for k in keys:
-                    first = self._dwell.setdefault(rid, {}).setdefault(k, now)
-                    if now - first >= dwell:
-                        fired = True
-                if not fired:
+            if dwell > 0:
+                dwell_state = self._dwell.setdefault(state_key, {})
+                gap = max(2.0, dwell * 2.0)
+                sustained = []
+                for key in unique:
+                    entry = dwell_state.get(key)
+                    if entry is None or now - entry['last_seen'] > gap:
+                        dwell_state[key] = {'first_seen': now, 'last_seen': now}
+                    else:
+                        entry['last_seen'] = now
+                    if now - dwell_state[key]['first_seen'] >= dwell:
+                        sustained.append(key)
+                # Prune objects that have not been seen for a while.
+                for key in list(dwell_state):
+                    if now - dwell_state[key]['last_seen'] > gap:
+                        dwell_state.pop(key, None)
+                if not sustained:
                     continue
-                # reset dwell for this rule after firing
-                self._dwell[rid] = {}
+                for key in sustained:
+                    dwell_state.pop(key, None)
 
-            if self._cooldown_ok(rule):
-                alerts.append({
-                    "rule_id": rule["id"],
-                    "rule_name": rule.get("name"),
-                    "stream_id": stream_id,
-                    "ts": time.time(),
-                    "payload": {
-                        "message": rule.get("name", "Rule fired"),
-                        "class": cls_filter,
-                        "count": count,
-                        "threshold": threshold,
-                        "detections": matched[:10],
+            if not self._cooldown_ok(rule, now):
+                continue
+            self._last_fired[rid] = now
+            alerts.append(
+                {
+                    'rule_id': rule['id'],
+                    'rule_name': rule.get('name'),
+                    'stream_id': stream_id,
+                    'webhook_url': rule.get('webhook_url'),
+                    'ts': now,
+                    'payload': {
+                        'message': rule.get('name', 'Rule fired'),
+                        'class': cls_filter,
+                        'count': count,
+                        'threshold': threshold,
+                        'zone': bool(zone),
+                        'detections': matched[:10],
                     },
-                })
+                }
+            )
         return alerts

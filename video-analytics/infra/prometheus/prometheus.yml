@@ -1,19 +1,20 @@
 global:
-  scrape_interval: 15s
+  scrape_interval: 5s
+  evaluation_interval: 5s
 
 scrape_configs:
-  - job_name: 'ingestion'
+  - job_name: ingestion
     static_configs:
-      - targets: ['ingestion:8001']
-  - job_name: 'worker'
+      - targets: ["ingestion:8001"]
+  - job_name: worker
     static_configs:
-      - targets: ['worker:8002']
-  - job_name: 'event-processor'
+      - targets: ["worker:8002"]
+  - job_name: event-processor
     static_configs:
-      - targets: ['event-processor:8003']
-  - job_name: 'api'
+      - targets: ["event-processor:8003"]
+  - job_name: api
     static_configs:
-      - targets: ['api:8004']
-  - job_name: 'prometheus'
+      - targets: ["api:8000"]
+  - job_name: prometheus
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ["localhost:9090"]

@@ -1,41 +1,49 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { WS_URL, fetchAlerts } from "../lib/api";
+import { AlertItem, WS_URL, fetchAlerts } from "../lib/api";
 
 export default function AlertPanel() {
-  const [alerts, setAlerts] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    fetchAlerts().then(setAlerts).catch(() => {});
-    let ws: WebSocket | null = new WebSocket(`${WS_URL}/ws/alerts`);
+    fetchAlerts()
+      .then((page) => setAlerts(page.items))
+      .catch((err) => setError(err instanceof Error ? err.message : "failed to load alerts"));
+    const ws = new WebSocket(`${WS_URL}/ws/alerts`);
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        setAlerts((prev) => [data, ...prev].slice(0, 50));
+        setAlerts((prev) => [data, ...prev].slice(0, 100));
       } catch {
-        // ignore
+        // ignore malformed messages
       }
     };
     const keep = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send("ping");
+      if (ws.readyState === WebSocket.OPEN) ws.send("ping");
     }, 15000);
     return () => {
       clearInterval(keep);
-      ws?.close();
+      ws.close();
     };
   }, []);
 
   return (
     <div className="card">
-      <strong>Alerts</strong>
-      {alerts.length === 0 && <p style={{ color: "#8b949e" }}>No alerts yet.</p>}
-      <ul style={{ marginTop: 12, paddingLeft: 18 }}>
+      <div className="row">
+        <strong>Alerts</strong>
+        <span className="badge stopped">{alerts.length}</span>
+      </div>
+      {error && <p className="bad">{error}</p>}
+      {alerts.length === 0 && <p className="muted">No alerts yet.</p>}
+      <ul className="alert-list">
         {alerts.map((a, i) => (
-          <li key={a.id || i} style={{ marginBottom: 6 }}>
-            <span style={{ color: "#f85149" }}>●</span>{" "}
-            {a.payload?.message || a.payload?.rule_name || "Alert"} ·{" "}
+          <li key={a.id || i}>
+            <span className="bad">▲</span>{" "}
+            {String(a.payload?.message || a.payload?.rule_name || "Alert")} ·{" "}
             {a.ts ? new Date(a.ts).toLocaleTimeString() : "now"}
+            {a.delivered === false && <span className="muted"> · webhook pending</span>}
           </li>
         ))}
       </ul>

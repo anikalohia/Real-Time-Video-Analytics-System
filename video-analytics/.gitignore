@@ -8,12 +8,14 @@ node_modules/
 .next/
 out/
 dist/
+*.tsbuildinfo
 build/
 *.onnx
 *.pt
 *.mp4
 *.avi
 *.mkv
+samples/bench_frame.jpg
 pgdata/
 grafana-data/
 .pytest_cache/

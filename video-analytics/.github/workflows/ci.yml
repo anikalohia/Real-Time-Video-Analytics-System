@@ -16,9 +16,11 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest fakeredis numpy opencv-python-headless
-          pip install -r services/worker/requirements.txt || true
-          pip install redis
+          pip install -r requirements-dev.txt
+          pip install -r services/event-processor/requirements.txt
+          pip install -r services/api/requirements.txt
+          pip install -r services/ingestion/requirements.txt
+          pip install -r services/worker/requirements.txt
       - name: Unit tests
         run: pytest -q
 
@@ -30,6 +32,8 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install lint tools
-        run: pip install ruff
-      - name: Ruff
-        run: ruff check services || true
+        run: pip install ruff==0.8.4
+      - name: Ruff lint
+        run: ruff check services scripts benchmarks
+      - name: Ruff format
+        run: ruff format --check services scripts benchmarks
