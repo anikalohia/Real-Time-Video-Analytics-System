@@ -56,7 +56,7 @@ else:  # pragma: no cover
     frames_processed = frames_dropped = detections_published = dead_lettered = None
 
 if Gauge:
-    stream_fps = Gauge('stream_fps', 'Processed frames per second', ['stream', 'direction'])
+    stream_fps = Gauge('worker_stream_fps', 'Processed frames per second', ['stream', 'direction'])
     redis_stream_length = Gauge('redis_stream_length', 'Redis stream length', ['stream'])
     worker_lag = Gauge('redis_consumer_lag', 'Approximate consumer group lag', ['stream', 'group'])
 else:  # pragma: no cover

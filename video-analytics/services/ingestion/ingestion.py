@@ -29,7 +29,7 @@ if Counter:
         'Stream status (1=connected,2=reconnecting,3=failed)',
         ['stream'],
     )
-    ingest_fps = Gauge('stream_fps', 'Ingested frames per second', ['stream', 'direction'])
+    ingest_fps = Gauge('ingestion_stream_fps', 'Ingested frames per second', ['stream', 'direction'])
 else:  # pragma: no cover
     frames_ingested = frames_published = reconnect_attempts = stream_status = ingest_fps = None
 
