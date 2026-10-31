@@ -36,6 +36,10 @@ def log_event(**fields):
     print(json.dumps({'service': 'event-processor', **fields}, default=str), flush=True)
 
 
+class AlertPersistenceError(RuntimeError):
+    """Raised when generated alerts could not be written to the database."""
+
+
 cfg = get_config()
 
 if Counter:
@@ -163,33 +167,38 @@ class EventProcessor:
         start = time.time()
         session = self.Session()
         try:
-            if self.buffer:
-                for e in self.buffer:
-                    session.add(
-                        Event(
-                            stream_id=to_uuid(e['stream_id']),
-                            ts=e['ts'],
-                            class_=e['class'],
-                            confidence=e['confidence'],
-                            bbox=e['bbox'],
-                            track_id=e.get('track_id'),
-                            frame_id=e.get('frame_id'),
-                        )
+            keys = [e.get('event_key') for e in self.buffer if e.get('event_key')]
+            existing: set[str] = set()
+            if keys:
+                existing = set(
+                    session.execute(select(Event.event_key).where(Event.event_key.in_(keys)))
+                    .scalars()
+                    .all()
+                )
+            inserted = 0
+            for e in self.buffer:
+                key = e.get('event_key')
+                if key and key in existing:
+                    continue
+                session.add(
+                    Event(
+                        stream_id=to_uuid(e['stream_id']),
+                        ts=e['ts'],
+                        class_=e['class'],
+                        confidence=e['confidence'],
+                        bbox=e['bbox'],
+                        track_id=e.get('track_id'),
+                        frame_id=e.get('frame_id'),
+                        event_key=key,
                     )
-                session.commit()
-                if events_written:
-                    events_written.inc(len(self.buffer))
-            # Ack only after a successful commit (or when there was nothing to write).
-            if self.pending_acks:
-                by_stream: dict[str, list[str]] = {}
-                for stream_name, msg_id in self.pending_acks:
-                    by_stream.setdefault(stream_name, []).append(msg_id)
-                for stream_name, ids in by_stream.items():
-                    self.redis.xack(stream_name, cfg.consumer_group, *ids)
-                self.pending_acks.clear()
+                )
+                inserted += 1
+                if key:
+                    existing.add(key)
+            session.commit()
+            if events_written:
+                events_written.inc(inserted)
             self.buffer.clear()
-            self.last_flush = time.time()
-            return True
         except Exception as exc:
             session.rollback()
             if db_write_errors:
@@ -201,15 +210,52 @@ class EventProcessor:
             if db_write_duration:
                 db_write_duration.observe(time.time() - start)
 
-    def persist_alerts(self, alerts: list[dict[str, Any]]):
+        # The events are durable. ACK separately so a Redis failure cannot cause
+        # the same buffered events to be inserted again.
+        if self.pending_acks:
+            by_stream: dict[str, list[str]] = {}
+            for stream_name, msg_id in self.pending_acks:
+                by_stream.setdefault(stream_name, []).append(msg_id)
+            try:
+                for stream_name, ids in by_stream.items():
+                    self.redis.xack(stream_name, cfg.consumer_group, *ids)
+                self.pending_acks.clear()
+            except Exception as exc:
+                log_event(event='ack_error', error=str(exc))
+                return False
+        self.last_flush = time.time()
+        return True
+
+    def persist_alerts(
+        self, alerts: list[dict[str, Any]]
+    ) -> list[tuple[dict[str, Any], uuid.UUID]] | None:
+        """Persist alerts and return only the newly inserted rows.
+
+        Returns None on a database failure so the caller can keep the source
+        message pending for retry instead of silently dropping the alert.
+        """
         if not alerts:
-            return
+            return []
         session = self.Session()
-        alert_ids: list[uuid.UUID] = []
+        inserted: list[tuple[dict[str, Any], uuid.UUID]] = []
         pending_webhooks: list[tuple[str, str, dict]] = []
         try:
+            keys = [a.get('_alert_key') for a in alerts if a.get('_alert_key')]
+            existing: set[str] = set()
+            if keys:
+                existing = set(
+                    session.execute(select(Alert.alert_key).where(Alert.alert_key.in_(keys)))
+                    .scalars()
+                    .all()
+                )
             for a in alerts:
+                key = a.get('_alert_key')
+                if key and key in existing:
+                    continue
+                alert_id = uuid.uuid4()
                 alert = Alert(
+                    id=alert_id,
+                    alert_key=key,
                     rule_id=to_uuid(a['rule_id']),
                     stream_id=to_uuid(a['stream_id']),
                     ts=datetime.fromtimestamp(a['ts'], tz=UTC),
@@ -217,15 +263,16 @@ class EventProcessor:
                     delivered=not bool(a.get('webhook_url')),
                 )
                 session.add(alert)
-                session.flush()
-                alert_ids.append(alert.id)
+                inserted.append((a, alert_id))
+                if key:
+                    existing.add(key)
                 if a.get('webhook_url'):
                     pending_webhooks.append(
                         (
-                            str(alert.id),
+                            str(alert_id),
                             a['webhook_url'],
                             {
-                                'alert_id': str(alert.id),
+                                'alert_id': str(alert_id),
                                 'rule_id': str(a['rule_id']),
                                 'rule_name': a.get('rule_name'),
                                 'stream_id': str(a['stream_id']),
@@ -240,13 +287,13 @@ class EventProcessor:
             if db_write_errors:
                 db_write_errors.inc()
             log_event(event='alert_write_error', error=str(exc))
-            return []
+            return None
         finally:
             session.close()
         # Deliver only after the alert is durably committed.
         for alert_id, url, payload in pending_webhooks:
             self.webhooks.submit(alert_id, url, payload)
-        return alert_ids
+        return inserted
 
     def broadcast(self, channel: str, data: dict[str, Any]):
         try:
@@ -270,8 +317,15 @@ class EventProcessor:
     ) -> int:
         now = time.time()
         events_added = 0
+        message_id = ack_ref[1] if ack_ref else None
+        prepared: list[dict[str, Any]] = []
+        for index, det in enumerate(dets):
+            item = dict(det)
+            if message_id:
+                item['_event_key'] = f'{message_id}:{index}'
+            prepared.append(item)
         by_stream: dict[str, list[dict[str, Any]]] = {}
-        for det in dets:
+        for det in prepared:
             by_stream.setdefault(str(det.get('stream_id', 'unknown')), []).append(det)
 
         for sid, items in by_stream.items():
@@ -305,6 +359,7 @@ class EventProcessor:
                             'bbox': det.get('bbox'),
                             'track_id': det.get('track_id'),
                             'frame_id': det.get('frame_id'),
+                            'event_key': det.get('_event_key'),
                         }
                     )
                     events_added += 1
@@ -323,8 +378,17 @@ class EventProcessor:
 
             alerts = self.rule_engine.evaluate(tracked, self.rules, sid, now=now)
             if alerts:
-                alert_ids = self.persist_alerts(alerts)
-                for alert, alert_id in zip(alerts, alert_ids):
+                if message_id:
+                    for alert in alerts:
+                        alert['_alert_key'] = (
+                            f"{message_id}:alert:{alert['stream_id']}:{alert['rule_id']}"
+                        )
+                saved_alerts = self.persist_alerts(alerts)
+                if saved_alerts is None:
+                    raise AlertPersistenceError(
+                        f'failed to persist {len(alerts)} alert(s) for stream {sid}'
+                    )
+                for alert, alert_id in saved_alerts:
                     if alerts_fired:
                         alerts_fired.labels(rule=alert.get('rule_name') or 'rule').inc()
                     self.broadcast(
@@ -385,7 +449,18 @@ class EventProcessor:
             if attempts >= cfg.max_delivery_attempts:
                 self._dead_letter(msg_id, fields, 'parse_error')
             return
-        self.process_detections(dets, ack_ref=('detections', msg_id))
+        try:
+            self.process_detections(dets, ack_ref=('detections', msg_id))
+        except AlertPersistenceError as exc:
+            attempts = self._retry_count(msg_id)
+            log_event(
+                event='alert_persist_error',
+                msg_id=msg_id,
+                attempt=attempts,
+                error=str(exc),
+            )
+            if attempts >= cfg.max_delivery_attempts:
+                self._dead_letter(msg_id, fields, 'alert_persist_error')
 
     def reclaim_stale(self, min_idle_ms: int = 60000, count: int = 10):
         """Recover detections left pending by a crashed event processor."""

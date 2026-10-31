@@ -120,8 +120,8 @@ the API login token stored client-side.
 
 - **Bounded queues**: Redis `MAXLEN` on frame/detection streams and a bounded
   DB buffer.
-- **No silent loss on DB failure**: ACK-after-commit; pending messages remain
-  reclaimable.
+- **Event ACK-after-commit**: pending messages remain reclaimable on DB failure;
+  alert persistence failures are not retried separately.
 - **Stale-work rejection**: capture timestamps are compared before inference.
 - **Crash recovery**: `XAUTOCLAIM` in both consumers.
 - **Backpressure**: the manager keeps one ingestor per stream; workers read in
@@ -141,19 +141,19 @@ the API login token stored client-side.
 
 `infra/docker-compose.yml` runs Redis, PostgreSQL, Alembic migrations, the demo
 seed, sample bootstrap, MediaMTX, a fake RTSP camera, ingestion, worker, event
-processor, API, dashboard, Prometheus, and Grafana. The root
-`docker-compose.yml` includes the infra file so `docker compose up --build`
-works from the repository root.
+processor, API, dashboard, Prometheus, and Grafana. The `docker-compose.yml` in
+this directory includes the infra file so `docker compose up --build` works
+from `video-analytics/`.
 
 ## Known limitations
 
-- The Docker stack has **not been run end to end** on the development machine
-  because the Docker daemon/WSL are unavailable. Compose syntax is validated;
-  runtime behavior is not.
+- The Docker stack has been run end to end from a copy outside OneDrive. The
+  original OneDrive checkout cannot be used as a Docker build context.
 - The local functional pipeline uses fakeredis and SQLite, so it does not
   validate real Redis/PostgreSQL failure behavior.
-- No GPU is available; ONNX inference is CPU-only.
-- Capacity targets and chaos results are unmeasured; do not treat the local
-  functional counts as throughput benchmarks.
+- No GPU is available; ONNX inference is CPU-only. The 4-stream/10 FPS p95
+  target is not met on this hardware (see `benchmarks/results/`).
+- Processing is at-least-once: `XAUTOCLAIM` and a post-commit ACK failure can
+  duplicate events or alerts.
 - The provided sample is a short looping clip; real RTSP camera behavior is
   untested here.

@@ -27,7 +27,13 @@ class StreamManager:
         self.threads: dict[str, threading.Thread] = {}
         self.running = True
 
-    def fetch_running(self):
+    def fetch_running(self) -> list[tuple[str, str, int | None]] | None:
+        """Return running streams, or None when the database is unavailable.
+
+        None is deliberately distinct from an empty list: an empty list means
+        every stream is stopped, while None means we could not read the desired
+        state and must keep the current ingestors running.
+        """
         try:
             with self.engine.connect() as conn:
                 rows = conn.execute(
@@ -38,7 +44,7 @@ class StreamManager:
             return [(str(r[0]), r[1], r[2]) for r in rows]
         except Exception as exc:
             log_event(event='db_unavailable', error=str(exc))
-            return []
+            return None
 
     def update_health(self, sid: str, health: str):
         try:
@@ -87,16 +93,20 @@ class StreamManager:
         self.update_health(sid, 'stopped')
         log_event(event='stream_stopped', stream_id=sid)
 
+    def reconcile(self, running: list[tuple[str, str, int | None]]):
+        running_ids = {sid for sid, _, _ in running}
+        for sid in list(self.ingestors.keys()):
+            if sid not in running_ids:
+                self.stop_stream(sid)
+        for sid, source_url, fps in running:
+            if sid not in self.ingestors:
+                self.start_stream(sid, source_url, fps)
+
     def run(self):
         while self.running:
             running = self.fetch_running()
-            running_ids = {sid for sid, _, _ in running}
-            for sid in list(self.ingestors.keys()):
-                if sid not in running_ids:
-                    self.stop_stream(sid)
-            for sid, source_url, fps in running:
-                if sid not in self.ingestors:
-                    self.start_stream(sid, source_url, fps)
+            if running is not None:
+                self.reconcile(running)
             time.sleep(cfg.manager_poll_seconds)
 
     def shutdown(self):

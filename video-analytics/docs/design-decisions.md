@@ -73,14 +73,14 @@ default for public deployments.
 
 ## One-command demo
 
-The root `docker-compose.yml` includes `infra/docker-compose.yml` so
-`docker compose up --build` works from the repository root. Migrations and
-demo seeding run as one-shot services with `service_completed_successfully`
-dependencies. Seeding is idempotent and never overwrites a user's stopped
-stream.
+The `docker-compose.yml` in `video-analytics/` includes
+`infra/docker-compose.yml` so `docker compose up --build` works from that
+directory. Migrations and demo seeding run as one-shot services with
+`service_completed_successfully` dependencies. Seeding is idempotent and never
+overwrites a user's stopped stream.
 
 ## Not decided by convenience
 
 - No face recognition or biometric features; the project stays within the TRD.
-- No fabricated benchmark numbers. Docker/ONNX-runtime verification is reported
-  honestly in `docs/STATUS.md`, including what could not be measured.
+- No fabricated benchmark numbers. Verification and measured NFR gaps are
+  reported honestly in `docs/STATUS.md` and `benchmarks/results/`.

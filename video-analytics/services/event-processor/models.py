@@ -43,6 +43,7 @@ class Event(Base):
     bbox = Column(JSON)
     track_id = Column(String(50), nullable=True)
     frame_id = Column(Integer, nullable=True)
+    event_key = Column(String(255), nullable=True, unique=True)
     __table_args__ = (
         Index('ix_events_stream_ts', 'stream_id', desc('ts')),
         Index('ix_events_class_ts', 'class', desc('ts')),
@@ -73,6 +74,7 @@ class Alert(Base):
     ts = Column(DateTime(timezone=True), server_default=func.now())
     payload = Column(JSON)
     delivered = Column(Boolean, default=False)
+    alert_key = Column(String(255), nullable=True, unique=True)
     __table_args__ = (Index('ix_alerts_ts', desc('ts')),)
 
 

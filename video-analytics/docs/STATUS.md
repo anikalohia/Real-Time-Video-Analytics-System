@@ -1,7 +1,9 @@
 # Project Status Audit
 
-**Audit date:** 2026-10-26  
-**Repository:** `video-analytics/` (git commit `53ad140`, plus uncommitted local work)  
+**Audit date:** 2026-10-31
+
+**Repository:** `video-analytics/` (plus uncommitted local work)
+
 **Source of truth:** `PRD and TRD Real-Time Video Analytics Platform.md` (repo root)
 
 ## Environment detected
@@ -49,10 +51,13 @@ the non-OneDrive copy of the same source.
 | `scripts/fetch_sample.py samples/sample.avi` | Downloaded `vtest.avi` (8,131,690 bytes) |
 | Manual auth/rate-limit check (`AUTH_ENABLED=1`) | **Passed**: unauth mutation blocked, login works, 3rd login returns 429 |
 | `cd web && npm run build` | **Passed** on retry (4 static routes generated) |
+| Browser/Grafana rendering (2026-10-31) | **Passed**: live frame, canvas overlays, event feed, alert panel, Grafana panels |
+| `benchmarks/load_test.py` in Compose network (2026-10-31) | **Completed**: 2-stream and 4-stream runs; NFR not met (see below) |
 
 ## Requirement status
 
-Status values: **done**, **partial**, **missing**, **broken**, **not measured**.
+Status values: **done**, **partial**, **missing**, **broken**, **not measured**,
+**not met**.
 
 ### Functional requirements
 
@@ -66,7 +71,7 @@ Status values: **done**, **partial**, **missing**, **broken**, **not measured**.
 | F6 | Zone/count rule engine | done | IoU tracking, unique-object count, dwell state, zones, cooldown; zone editor UI |
 | F7 | Alerts in UI and webhook | done | `WebhookDispatcher` with retries/backoff, delivery status, alert panel |
 | F8 | Event query filters + pagination | done | Cursor envelopes for events and alerts, `from_ts`/`to_ts`, stream/class filters, indexes |
-| F9 | Metrics endpoint + Grafana dashboards | done | `ep_*`/`api_*` metrics, Prometheus targets all up at runtime, Grafana HTTP 200; panel rendering not manually inspected |
+| F9 | Metrics endpoint + Grafana dashboards | done | `ep_*`/`api_*` metrics, Prometheus targets all up at runtime, Grafana panels rendered with live data on 2026-10-31 |
 | F10 | Reconnect with backoff | done | Exponential backoff + jitter, file-source health update, health exposed in API/UI; live RTSP reconnect unverified |
 | F11 | Event clips/snapshots (Could) | missing | Deferred; not required for Must/Should acceptance |
 | F12 | Auth | done | Auth enabled by default for mutations, 15-minute JWT, login UI, rate limiting, env secrets |
@@ -75,25 +80,24 @@ Status values: **done**, **partial**, **missing**, **broken**, **not measured**.
 
 | Requirement | Status | Evidence |
 | --- | --- | --- |
-| p95 end-to-end < 500 ms | not measured | No valid container benchmark; local smoke is not a capacity test |
-| 4 streams at 10 FPS | not measured | Compose runtime available; load harness exists, results absent |
+| p95 end-to-end < 500 ms | not met | p95 806.1 ms on the 4-stream overload run; 710.9 ms on 2 streams at 3 FPS (CPU-only) |
+| 4 streams at 10 FPS | not met | Generator reached only ~15 FPS aggregate; 82.2% stale/dropped on 1 worker |
 | Recovery < 30 s | not measured | XAUTOCLAIM/backoff implemented; no chaos measurement |
-| Backpressure / drop stale frames | done | Stale ACK/drop, bounded streams/buffer, latest-frame-wins; drop reasons/metrics |
-| Observability: Prometheus + structured logs | done | Service metrics, stage/lag gauges, JSON logs, provisioned dashboard; runtime scrape verified, Grafana panel rendering not manually inspected |
+| Backpressure / drop stale frames | done | Stale ACK/drop, bounded streams/buffer, latest-frame-wins; drop reasons/metrics; observed under overload |
+| Observability: Prometheus + structured logs | done | Service metrics, stage/lag gauges, JSON logs, provisioned dashboard; runtime scrape and panel rendering verified |
 | Portability: one command | partial | Compose smoke passes from a non-OneDrive path; original OneDrive checkout still fails as a Docker build context |
-| Security: no hard-coded secrets, URL validation, auth | done | Env secrets, SSRF DNS/private-IP checks with explicit demo allow-list, auth, rate limit, CORS |
+| Security: env secrets, URL validation, auth | partial | URL validation, auth, rate limit, CORS; dev-default JWT/admin values exist and frontend token expiry is not handled |
 | DB migrations | done | Alembic initial migration, indexes, migrate job before seed/services |
 
 ## Remaining verification gaps
 
-1. **Browser/WebSocket/Grafana rendering**: dashboard and Grafana return HTTP 200,
-   but browser interaction, live WebSocket alert fanout, and rendered panel
-   contents were not manually inspected.
-2. **Capacity/chaos**: no p95, FPS, drop-rate, or recovery-time numbers from the
-   real stack. Do not claim the TRD NFR targets.
-3. **Real RTSP**: only the Compose MediaMTX/fake-camera path and local files are
+1. **Capacity/chaos**: p95 and drop rates are measured, but the 4-stream/10 FPS
+   NFR is not met on CPU. Recovery <30 s still needs a chaos test.
+2. **Real RTSP**: only the Compose MediaMTX/fake-camera path and local files are
    configured; a physical camera is untested.
-4. **GPU**: unavailable; all reported inference is CPU-only.
+3. **GPU**: unavailable; all reported inference is CPU-only.
+4. **Browser resilience**: dashboard WebSocket clients do not auto-reconnect
+   after an API restart; a page refresh is required.
 
 ## Honest limitations
 
@@ -105,9 +109,10 @@ Status values: **done**, **partial**, **missing**, **broken**, **not measured**.
   successfully.
 - No GPU; there is no TensorRT/OpenVINO path in this phase.
 - The local functional pipeline uses fakeredis + SQLite; the Compose smoke uses
-  real Redis/PostgreSQL but is still not a failure/load test.
-- Grafana and the dashboard return HTTP 200 from the running stack, but panel
-  contents and browser interactions were not manually inspected.
+  real Redis/PostgreSQL. Load results are in `benchmarks/results/`.
+- Processing is at-least-once; a post-commit ACK failure can duplicate events.
+- Dev-default JWT/admin credentials are present for the demo; change them before
+  exposing the stack.
 - The API required a `bcrypt==4.0.1` pin: bcrypt 5.x is incompatible with
   passlib 1.7.4 and caused admin seeding to fail.
 - The fake-camera H.264 source logs transient decode warnings during stream

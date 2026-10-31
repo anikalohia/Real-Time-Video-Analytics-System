@@ -13,6 +13,7 @@ build/
 *.onnx
 *.pt
 *.mp4
+!docs/assets/*.mp4
 *.avi
 *.mkv
 samples/bench_frame.jpg
