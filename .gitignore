@@ -1,0 +1,44 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.vscode/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Models and local media
+*.onnx
+*.pt
+*.avi
+*.mkv
+*.mov
+*.webm
+*.mp4
+
+# Keep committed demo media
+!video-analytics/docs/assets/*.mp4
+!video-analytics/docs/assets/*.gif
+
+# Local data and logs
+*.log
+pgdata/
+grafana-data/
+.DS_Store
+Thumbs.db
+
+

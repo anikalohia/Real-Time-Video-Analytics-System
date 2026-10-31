@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: video-analytics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: video-analytics/**/requirements*.txt
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r services/event-processor/requirements.txt
+          pip install -r services/api/requirements.txt
+          pip install -r services/ingestion/requirements.txt
+          pip install -r services/worker/requirements.txt
+      - name: Unit tests
+        run: pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: video-analytics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lint tools
+        run: pip install ruff==0.8.4
+      - name: Ruff lint
+        run: ruff check services scripts benchmarks
+      - name: Ruff format
+        run: ruff format --check services scripts benchmarks
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: video-analytics/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: video-analytics/web/package-lock.json
+      - name: Install web deps
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose config
+        run: docker compose -f video-analytics/docker-compose.yml config --quiet
